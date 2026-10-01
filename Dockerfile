@@ -26,7 +26,9 @@ COPY app/ /opt/ebo/
 # See docs/SETUP.md for how to populate ./vendor before building.
 COPY vendor/lib/        /opt/ebo/lib/
 COPY vendor/bionic/     /opt/ebo/bionic/
-COPY vendor/ioctl9930.bin /opt/ebo/ioctl9930.bin
+# The 0x9930 stream-start blob is optional (docs/SETUP.md §3); copy it only when present.
+COPY vendor/ /tmp/vendor/
+RUN if [ -f /tmp/vendor/ioctl9930.bin ]; then cp /tmp/vendor/ioctl9930.bin /opt/ebo/ioctl9930.bin; fi; rm -rf /tmp/vendor
 
 RUN chmod +x /opt/ebo/ebo_bridge* /opt/ebo/bionic/linker /opt/ebo/run.sh /opt/ebo/mediamtx
 
