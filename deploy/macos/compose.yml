@@ -1,0 +1,19 @@
+# macOS host (OrbStack/Docker Desktop) reached over Tailscale.
+# Host networking on macOS stays inside the Linux VM, so ports are published explicitly:
+#   - the web app/API on loopback, exposed over HTTPS by `tailscale serve`
+#   - WebRTC media (UDP) on all interfaces, advertised to browsers via EBO_WEBRTC_HOSTS
+# Run from this directory:  docker compose up -d --build
+services:
+  ebo-bridge:
+    build: ../..
+    image: ebo-se-bridge:latest
+    container_name: ebo-bridge
+    restart: unless-stopped
+    env_file: ../../.env
+    environment:
+      EBO_BIND: 0.0.0.0
+      EBO_PORT: ${EBO_PORT:-8010}
+      EBO_BRIDGE_BIN: ebo_bridge-arm64
+    ports:
+      - "127.0.0.1:${EBO_PORT:-8010}:${EBO_PORT:-8010}"
+      - "8189:8189/udp"

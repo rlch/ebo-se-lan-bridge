@@ -2,6 +2,16 @@
 # Android/bionic linker must all have the same ABI (ARM32 or ARM64). Only H.265 passthrough
 # is done here, so a generic ffmpeg (no hardware codecs) is enough.
 ARG BUILD_FROM=python:3.11-slim-bookworm
+
+# The web app (React PWA) is built in its own stage; only dist/ reaches the runtime image.
+FROM node:22-slim AS web
+RUN corepack enable
+WORKDIR /web
+COPY web/package.json web/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY web/ ./
+RUN pnpm build
+
 FROM ${BUILD_FROM}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -22,6 +32,7 @@ RUN set -e; \
 
 # our application code
 COPY app/ /opt/ebo/
+COPY --from=web /web/dist/ /opt/ebo/web/
 # vendor files (NOT in git): the 4 TUTK .so, the Android bionic runtime, and the stream-start blob.
 # See docs/SETUP.md for how to populate ./vendor before building.
 COPY vendor/lib/        /opt/ebo/lib/
