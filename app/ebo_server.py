@@ -8,12 +8,13 @@ and the native ebo_bridge. Forwards video frames to ffmpeg, parses inbound statu
 Required env:  EBO_LICENSE EBO_UID EBO_AUTHKEY EBO_IDENTITY EBO_TOKEN
 Stream auth:   EBO_STREAM_USER EBO_STREAM_PASS         (mediamtx)
 Web panel:     EBO_WEB_USER EBO_WEB_PASS               (HTTP basic; disabled if unset)
-Other:         EBO_DIR (/opt/ebo)  EBO_PORT (8000)  EBO_BIND (127.0.0.1)
+Video:         EBO_VIDEO (copy | h264)  EBO_H264_HEIGHT (720)  EBO_H264_BITRATE (2500k)
+Other:         EBO_DIR (/opt/ebo)  EBO_PORT (8000)  EBO_BIND (127.0.0.1)  EBO_WEB_DIR (<EBO_DIR>/web)
 """
 import os, time, struct, threading, subprocess, secrets, socket, base64, urllib.request, urllib.error, http.cookiejar
 from pathlib import Path
 from fastapi import FastAPI, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import HTTPConnection
 from pydantic import BaseModel
@@ -36,6 +37,12 @@ AUDIO_RATE = os.environ.get("EBO_AUDIO_RATE", "8000")
 # to Opus, which adds latency (the player then delays video to stay A/V-synced). Opt-in only, e.g.:
 #   EBO_AUDIO_FILTER=highpass=f=200,afftdn=nr=20,dynaudnorm=g=11:m=15,alimiter=limit=0.9
 AUDIO_FILTER = os.environ.get("EBO_AUDIO_FILTER", "none")
+# Video: "copy" passes the robot's H.265 through untouched (no CPU). "h264" transcodes to
+# H.264 for browsers that cannot decode HEVC over WebRTC (costs CPU on the bridge host).
+VIDEO_MODE = os.environ.get("EBO_VIDEO", "copy")
+H264_HEIGHT = int(os.environ.get("EBO_H264_HEIGHT", "720"))
+H264_BITRATE = os.environ.get("EBO_H264_BITRATE", "2500k")
+WEB_DIR = Path(os.environ.get("EBO_WEB_DIR", os.path.join(EBO_DIR, "web")))
 RTSP_PATH = "ebo"
 STREAM_USER = os.environ.get("EBO_STREAM_USER", "ebo")
 STREAM_PASS = os.environ.get("EBO_STREAM_PASS", "")
@@ -191,15 +198,25 @@ class Bridge:
                 aout = ["-c:a", "copy"]   # raw G.711 passthrough (PCMU/PCMA), no processing
             cmd += ["-use_wallclock_as_timestamps", "1", "-thread_queue_size", "256",
                     "-f", AUDIO_FMT, "-ar", AUDIO_RATE, "-ac", "1", "-i", f"pipe:{self._a_r}",
-                    "-map", "0:v", "-map", "1:a", "-c:v", "copy"] + aout + \
+                    "-map", "0:v", "-map", "1:a"] + self._video_args() + aout + \
                    ["-max_interleave_delta", "0"]
             pass_fds = (self._a_r,)
         else:
-            cmd += ["-c:v", "copy", "-an"]
+            cmd += self._video_args() + ["-an"]
         cmd += ["-f", "rtsp", "-rtsp_transport", "tcp", url]
         self.ff = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.DEVNULL, pass_fds=pass_fds)
         print("[supervisor] ffmpeg pid", self.ff.pid, flush=True)
+
+    @staticmethod
+    def _video_args():
+        if VIDEO_MODE != "h264":
+            return ["-c:v", "copy"]
+        # Low-latency H.264 for WebRTC: no B-frames, 1 s GOP so a new viewer starts fast.
+        return ["-vf", f"scale=-2:{H264_HEIGHT}", "-c:v", "libx264", "-preset", "ultrafast",
+                "-tune", "zerolatency", "-profile:v", "baseline", "-pix_fmt", "yuv420p",
+                "-g", "30", "-bf", "0", "-b:v", H264_BITRATE, "-maxrate", H264_BITRATE,
+                "-bufsize", H264_BITRATE]
 
     def _restart_ffmpeg(self):
         # ffmpeg died (e.g. broken pipe). Restart it and re-sync at the next keyframe.
@@ -429,8 +446,8 @@ def require_auth(connection: HTTPConnection):
 
 app = FastAPI(dependencies=[Depends(require_auth)])
 
-@app.get("/", response_class=HTMLResponse)
-def index():
+@app.get("/classic", response_class=HTMLResponse)
+def classic():
     p = Path(__file__).parent / "ebo.html"
     return p.read_text(encoding="utf-8") if p.exists() else "<h1>EBO-SE</h1>"
 
@@ -504,6 +521,8 @@ def info():
         "paused": bridge.paused if bridge else False,
         "awake": bridge.is_awake() if bridge else False,
         "codec": bridge.codec_name if bridge else None,
+        "video": VIDEO_MODE,
+        "audio_enabled": AUDIO_ON,
         "frames_received": bridge.frame_count if bridge else 0,
         "audio": ({"codec": f"0x{bridge.audio_codec:02x}", "flags": f"0x{bridge.audio_flags:02x}",
                    "count": bridge.audio_count} if bridge and bridge.audio_codec is not None else None),
@@ -613,6 +632,28 @@ async def talk(websocket: WebSocket):
             try: await run_in_threadpool(bridge.speaker_stop)
             except Exception: pass
         _talk_owner.release()
+
+
+# ---------------- web app (built PWA in WEB_DIR; SPA fallback to index.html) ----------------
+def _web_file(path: str) -> Path | None:
+    root = WEB_DIR.resolve()
+    target = (root / path).resolve()
+    if target.is_relative_to(root) and target.is_file():
+        return target
+    return None
+
+@app.get("/{path:path}")
+def web(path: str):
+    target = _web_file(path) or _web_file("index.html")
+    if target is None:
+        return RedirectResponse("/classic") if not path else Response(status_code=404)
+    if target.name in ("index.html", "sw.js", "manifest.webmanifest"):
+        headers = {"Cache-Control": "no-cache"}
+    elif target.parent.name == "assets":   # content-hashed by Vite
+        headers = {"Cache-Control": "public, max-age=31536000, immutable"}
+    else:
+        headers = {"Cache-Control": "public, max-age=3600"}
+    return FileResponse(target, headers=headers)
 
 
 if __name__ == "__main__":

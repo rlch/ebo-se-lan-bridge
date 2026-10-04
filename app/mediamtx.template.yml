@@ -3,6 +3,8 @@
 logLevel: error
 hlsVariant: lowLatency
 hlsAlwaysRemux: yes
+webrtcLocalUDPAddress: :__WEBRTC_UDP__
+webrtcAdditionalHosts: __WEBRTC_HOSTS__
 
 # The local ffmpeg publisher is anonymous only from loopback, so its credentials never
 # appear in process arguments. Remote readers still require the generated account.
