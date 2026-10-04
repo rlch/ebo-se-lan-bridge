@@ -8,6 +8,6 @@ services:
     image: ebo-se-bridge:latest
     container_name: ebo-bridge
     restart: unless-stopped
-    # host networking keeps RTSP/WebRTC/MQTT reachable on the LAN with no port juggling
+    # host networking keeps RTSP/WebRTC reachable on the LAN with no port juggling
     network_mode: host
     env_file: .env

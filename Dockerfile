@@ -5,9 +5,9 @@ ARG BUILD_FROM=python:3.11-slim-bookworm
 FROM ${BUILD_FROM}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ffmpeg jq curl ca-certificates \
+        ffmpeg curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-RUN pip install --no-cache-dir fastapi "uvicorn[standard]" paho-mqtt
+RUN pip install --no-cache-dir fastapi "uvicorn[standard]"
 
 WORKDIR /opt/ebo
 

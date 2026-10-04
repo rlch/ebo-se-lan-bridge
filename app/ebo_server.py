@@ -3,13 +3,11 @@ EBO-SE bridge supervisor.
 
 Spawns mediamtx (RTSP/WebRTC/HLS server), ffmpeg (H.265 passthrough, no transcode)
 and the native ebo_bridge. Forwards video frames to ffmpeg, parses inbound status
-(battery), exposes a small authenticated control API + web panel, and (optionally)
-publishes Home Assistant entities over MQTT.
+(battery), and exposes a small control API plus the web app.
 
 Required env:  EBO_LICENSE EBO_UID EBO_AUTHKEY EBO_IDENTITY EBO_TOKEN
 Stream auth:   EBO_STREAM_USER EBO_STREAM_PASS         (mediamtx)
 Web panel:     EBO_WEB_USER EBO_WEB_PASS               (HTTP basic; disabled if unset)
-MQTT:          EBO_MQTT_HOST [EBO_MQTT_PORT EBO_MQTT_USER EBO_MQTT_PASS]
 Other:         EBO_DIR (/opt/ebo)  EBO_PORT (8000)  EBO_BIND (127.0.0.1)
 """
 import os, time, struct, threading, subprocess, secrets, socket, base64, urllib.request, urllib.error, http.cookiejar
@@ -91,20 +89,6 @@ def command_frame(command):
 
 CMD_DOCK = 40154
 
-# Device info (captured; for a community release these would be queried at runtime via MAVLink)
-DEVICE_INFO = {
-    "name": os.environ.get("EBO_NAME", "EBO-SE"),
-    "model": "EBO SE",
-    "sn": os.environ.get("EBO_SN", ""),
-    "fsn": os.environ.get("EBO_FSN", ""),
-    "mcu_version": os.environ.get("EBO_MCU", ""),
-    "camera_version": os.environ.get("EBO_CAMFW", ""),
-    "uid": os.environ.get("EBO_UID", ""),
-    "wifi_ssid": os.environ.get("EBO_SSID", ""),
-    "ip": os.environ.get("EBO_ROBOT_IP", ""),
-    "mac": os.environ.get("EBO_MAC", ""),
-}
-
 PARAM_TOGGLES = {
     "eyes_on": ("display", "enable", 1.0), "eyes_off": ("display", "enable", 0.0),
     "night_on": ("video", "night_vision", 1.0), "night_off": ("video", "night_vision", 0.0),
@@ -133,7 +117,6 @@ class Bridge:
         self.codec_name = None
         self.battery = -1
         self.charge = -1   # 0 = unplugged, 1 = charging/docked
-        self.on_status = None   # callback(battery, charge) for MQTT
         self._ctrl_r, self._ctrl_w = os.pipe()
         self._a_r, self._a_w = os.pipe()    # robot audio -> ffmpeg second input
         os.set_inheritable(self._a_r, True)
@@ -342,11 +325,7 @@ class Bridge:
                 plen = u[i+1]; msgid = u[i+5] if i+5 < len(u) else -1
                 if msgid == 207 and i + 24 <= len(u):   # BATTERY_STATUS
                     bp = u[i+22]; cs = u[i+23]
-                    if bp != self.battery or cs != self.charge:
-                        self.battery = bp; self.charge = cs
-                        if self.on_status:
-                            try: self.on_status(bp, cs)
-                            except Exception: pass
+                    self.battery = bp; self.charge = cs
                 i += 8 + plen + 2 if plen else i + 1
             else:
                 i += 1
@@ -402,7 +381,7 @@ class Bridge:
                 self._speaker_ready.clear()
 
 
-# ---------------- actions (shared by REST + MQTT) ----------------
+# ---------------- actions ----------------
 def do_action(name: str) -> bool:
     if name == "dock":
         for _ in range(5): bridge.send_rdt(command_frame(CMD_DOCK)); time.sleep(0.15)
@@ -639,15 +618,4 @@ async def talk(websocket: WebSocket):
 if __name__ == "__main__":
     bridge = Bridge()
     threading.Thread(target=_drive_watchdog, daemon=True).start()
-    mqtt_host = os.environ.get("EBO_MQTT_HOST")
-    if mqtt_host:
-        try:
-            from ebo_mqtt import EBOMqtt
-            di = dict(DEVICE_INFO); di["ip_pi"] = lan_ip()
-            EBOMqtt(bridge, do_action, do_move, di, mqtt_host,
-                    int(os.environ.get("EBO_MQTT_PORT", "1883")),
-                    os.environ.get("EBO_MQTT_USER") or None, os.environ.get("EBO_MQTT_PASS") or None)
-            print(f"[supervisor] MQTT -> {mqtt_host}", flush=True)
-        except Exception as e:
-            print("[supervisor] MQTT error:", e, flush=True)
     uvicorn.run(app, host=BIND_HOST, port=PORT, log_level="warning")

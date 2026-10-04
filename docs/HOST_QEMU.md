@@ -16,7 +16,7 @@ Recommended workspace:
 │   ├── bionic/           # ARM64 Android linker and runtime
 │   └── lib/              # owned ARM64 TUTK libraries
 ├── tools/qemu/           # privately unpacked qemu-user package
-└── venv/                 # FastAPI/uvicorn/paho-mqtt
+└── venv/                 # FastAPI/uvicorn
 ```
 
 Start it with:
