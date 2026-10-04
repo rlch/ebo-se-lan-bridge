@@ -53,8 +53,21 @@ the installed APK. Frida hooks remain an optional validation method.
 | `EBO_LICENSE` | `TUTK_SDK_Set_License_Key(...)` argument |
 | `EBO_UID` | the 20-char TUTK UID |
 | `EBO_AUTHKEY` | `St_IOTCConnectInput.authKey` (8 chars) |
-| `EBO_IDENTITY` | `avClientStartEx` InConfig account (the UUID) |
+| `EBO_IDENTITY` | `avClientStartEx` InConfig account (`table_device.account`) |
 | `EBO_TOKEN` | `avClientStartEx` InConfig password/token |
+
+Where to find them in ROLA (`com.enabot.ebo.intl`):
+
+- `EBO_LICENSE`: the literal passed to `TUTK_SDK_Set_License_Key` in `SplashActivity`.
+- `EBO_AUTHKEY`: a fixed 8-character literal ROLA sets as `St_IOTCConnectInput.authKey`
+  (with `authenticationType = 0`) in its session helper (`TuTkSessionHelper`,
+  `lib_device/tutk/camera/tutk/c0`). jadx fails to decompile that coroutine; dump it with
+  `jadx -m fallback --single-class com.enabot.lib_device.tutk.camera.tutk.c0`.
+- `EBO_UID`, `EBO_IDENTITY`, `EBO_TOKEN`: the robot's row in ROLA's private
+  `databases/history.db`, table `table_device`, columns `udid`, `account` and `pwd`. ROLA
+  writes the row the first time the account that owns the robot opens its live view; reading
+  it needs a debuggable (re-signed) ROLA and `adb exec-out run-as com.enabot.ebo.intl cat
+  databases/history.db` (pull the `-wal` too).
 
 > The DTLS-PSK is derived by the library as `identity = "AUTHTKN_"+EBO_IDENTITY`,
 > `psk = SHA256(EBO_TOKEN)` — you only need the two raw values above.
