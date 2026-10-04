@@ -42,6 +42,8 @@ AUDIO_FILTER = os.environ.get("EBO_AUDIO_FILTER", "none")
 VIDEO_MODE = os.environ.get("EBO_VIDEO", "copy")
 H264_HEIGHT = int(os.environ.get("EBO_H264_HEIGHT", "720"))
 H264_BITRATE = os.environ.get("EBO_H264_BITRATE", "2500k")
+# The native bridge exits at once without these; the web app still runs and says so.
+CONFIGURED = all(os.environ.get(k) for k in ("EBO_LICENSE", "EBO_UID", "EBO_AUTHKEY", "EBO_IDENTITY", "EBO_TOKEN"))
 WEB_DIR = Path(os.environ.get("EBO_WEB_DIR", os.path.join(EBO_DIR, "web")))
 RTSP_PATH = "ebo"
 STREAM_USER = os.environ.get("EBO_STREAM_USER", "ebo")
@@ -517,6 +519,7 @@ async def hls(path: str, request: Request):
 def info():
     ip = lan_ip()
     return JSONResponse({
+        "configured": CONFIGURED,
         "connected": bridge.connected if bridge else False,
         "paused": bridge.paused if bridge else False,
         "awake": bridge.is_awake() if bridge else False,
@@ -559,6 +562,35 @@ def _drive_watchdog():
         if _last_drive and (time.time() - _last_drive) > 0.35:
             _last_drive = 0.0
             try: bridge.send_rdt(motor_frame())   # deadman stop
+            except Exception: pass
+
+# Same analog drive over a WebSocket: each {"ly","rx"} message is one motor frame. Lower overhead
+# than an HTTP POST per update on mobile links; the watchdog above still stops the robot when
+# messages stop, and a disconnect stops it immediately.
+@app.websocket("/ws/drive")
+async def drive_ws(websocket: WebSocket):
+    global _last_drive
+    if not _valid_basic_auth(websocket.headers.get("authorization")):
+        await websocket.close(code=4401, reason="Unauthorized")
+        return
+    await websocket.accept()
+    try:
+        while True:
+            msg = await websocket.receive_json()
+            try:
+                ly = max(-1.0, min(1.0, float(msg.get("ly", 0.0))))
+                rx = max(-1.0, min(1.0, float(msg.get("rx", 0.0))))
+            except (TypeError, ValueError, AttributeError):
+                await websocket.close(code=1008, reason="Invalid drive message")
+                return
+            if bridge:
+                bridge.send_rdt(motor_frame(ly=ly, rx=rx))
+            _last_drive = time.time() if (ly or rx) else 0.0
+    except (WebSocketDisconnect, ValueError):
+        pass
+    finally:
+        if bridge:
+            try: bridge.send_rdt(motor_frame())
             except Exception: pass
 
 @app.post("/stop")

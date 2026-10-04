@@ -49,5 +49,20 @@ class WebAppTests(unittest.TestCase):
         self.assertFalse(r.json()["connected"])
 
 
+class DriveSocketTests(unittest.TestCase):
+    def test_drive_messages_send_frames_and_disconnect_stops(self):
+        sent = []
+        fake = mock.Mock()
+        fake.send_rdt.side_effect = sent.append
+        with mock.patch.object(ebo_server, "bridge", fake):
+            client = TestClient(ebo_server.app)
+            with client.websocket_connect("/ws/drive") as ws:
+                ws.send_json({"ly": 0.5, "rx": -2})
+                ws.send_json({"ly": 0, "rx": 0})
+        self.assertEqual(sent[0], ebo_server.motor_frame(ly=0.5, rx=-1.0))
+        self.assertEqual(sent[-1], ebo_server.motor_frame())
+        self.assertEqual(len(sent), 3)
+
+
 if __name__ == "__main__":
     unittest.main()

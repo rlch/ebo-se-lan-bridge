@@ -4,8 +4,9 @@
 set -e
 APP=/opt/ebo
 
-: "${EBO_LICENSE:?missing license_key}"; : "${EBO_UID:?missing uid}"; : "${EBO_AUTHKEY:?missing authkey}"
-: "${EBO_IDENTITY:?missing av_identity}"; : "${EBO_TOKEN:?missing av_token}"
+for v in EBO_LICENSE EBO_UID EBO_AUTHKEY EBO_IDENTITY EBO_TOKEN; do
+  [ -n "${!v:-}" ] || echo "[run] $v is not set: the web app runs but cannot reach the robot" >&2
+done
 : "${EBO_STREAM_USER:=ebo}"; : "${EBO_STREAM_PASS:?missing stream_pass (RTSP password)}"
 
 # Extra WebRTC ICE hosts (comma-separated IPs/names the browser can reach, e.g. a Tailscale IP)
