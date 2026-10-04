@@ -674,7 +674,7 @@ def _web_file(path: str) -> Path | None:
         return target
     return None
 
-@app.get("/{path:path}")
+@app.api_route("/{path:path}", methods=["GET", "HEAD"])
 def web(path: str):
     target = _web_file(path) or _web_file("index.html")
     if target is None:

@@ -39,6 +39,9 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("immutable", r.headers["cache-control"])
         self.assertEqual(self.client.get("/sw.js").headers["cache-control"], "no-cache")
 
+    def test_head_is_allowed(self):
+        self.assertEqual(self.client.head("/sw.js").status_code, 200)
+
     def test_path_traversal_falls_back_to_index(self):
         r = self.client.get("/..%2Fsecret.txt")
         self.assertNotIn("nope", r.text)
